@@ -6,7 +6,7 @@ import {
   PrimaryColumn,
 } from 'typeorm';
 
-@Entity('token_mint')
+@Entity('token_mint') // 确保这里的表名与数据库中的表名匹配
 @Index(['tokenPubKey', 'ownerPubKeyHash'])
 export class TokenMintEntity {
   @PrimaryColumn({ length: 64 })
