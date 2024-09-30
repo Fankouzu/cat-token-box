@@ -71,38 +71,40 @@ export class TokenService {
       }
       cached = tokenInfo;
     }
-    
+
     if (cached) {
       try {
         const [mintedResult, holderResult] = await Promise.all([
           this.tokenMintRepository.query(
             'SELECT SUM(token_amount) as total FROM token_mint WHERE token_pubkey = $1',
-            [cached.tokenPubKey]
+            [cached.tokenPubKey],
           ),
           this.tokenMintRepository.query(
             'SELECT COUNT(DISTINCT owner_pkh) as count FROM token_mint WHERE token_pubkey = $1',
-            [cached.tokenPubKey]
-          )
+            [cached.tokenPubKey],
+          ),
         ]);
 
         const mintedAmount = mintedResult[0]?.total;
         const holderCount = holderResult[0]?.count;
 
-        cached = { 
-          ...cached, 
+        cached = {
+          ...cached,
           minted: mintedAmount ? BigInt(mintedAmount).toString() : '0',
-          holder: holderCount ? parseInt(holderCount) : 0
+          holder: holderCount ? parseInt(holderCount) : 0,
         } as TokenInfoEntity & { minted: string; holder: number };
       } catch (error) {
         console.error('Error querying token_mint table:', error);
         // 如果查询失败，我们仍然返回cached，但不包含minted和holder信息
       }
     }
-    
+
     return this.renderTokenInfo(cached);
   }
 
-  renderTokenInfo(tokenInfo: TokenInfoEntity & { minted?: string; holder?: number }) {
+  renderTokenInfo(
+    tokenInfo: TokenInfoEntity & { minted?: string; holder?: number },
+  ) {
     if (!tokenInfo) {
       return null;
     }
@@ -110,7 +112,13 @@ export class TokenService {
     const tokenAddr = xOnlyPubKeyToAddress(tokenInfo.tokenPubKey);
     const rendered = Object.assign(
       {},
-      { minterAddr, tokenAddr, info: tokenInfo.rawInfo, minted: tokenInfo.minted, holder: tokenInfo.holder },
+      {
+        minterAddr,
+        tokenAddr,
+        info: tokenInfo.rawInfo,
+        minted: tokenInfo.minted,
+        holder: tokenInfo.holder,
+      },
       tokenInfo,
     );
     delete rendered.rawInfo;
@@ -278,7 +286,7 @@ export class TokenService {
           AND table_name = 'token_mint'
         )
       `);
-      
+
       if (tableExists[0].exists) {
         // console.log('token_mint table exists');
       } else {
@@ -292,14 +300,14 @@ export class TokenService {
         WHERE table_name = 'token_mint'
       `);
       // console.log('token_mint table structure:', columns);
-
     } catch (error) {
       console.error('Error checking database and table:', error);
     }
   }
 
   async getHolderListByTokenIdOrTokenAddress(tokenIdOrTokenAddr: string) {
-    const tokenInfo = await this.getTokenInfoByTokenIdOrTokenAddress(tokenIdOrTokenAddr);
+    const tokenInfo =
+      await this.getTokenInfoByTokenIdOrTokenAddress(tokenIdOrTokenAddr);
     if (!tokenInfo || !tokenInfo.tokenPubKey) {
       return null;
     }
@@ -316,11 +324,15 @@ export class TokenService {
         AND "spend_txid" IS NULL
       GROUP BY 
         "owner_pkh"
+      ORDER BY 
+        balance DESC
     `;
 
-    const holders = await this.txOutRepository.query(query, [tokenInfo.tokenPubKey]);
+    const holders = await this.txOutRepository.query(query, [
+      tokenInfo.tokenPubKey,
+    ]);
 
-    return holders.map(holder => ({
+    return holders.map((holder) => ({
       address: holder.address,
       balance: holder.balance,
       utxoCount: parseInt(holder.utxoCount),
