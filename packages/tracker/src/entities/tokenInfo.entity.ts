@@ -53,4 +53,5 @@ export class TokenInfoEntity {
 
   @UpdateDateColumn({ name: 'updated_at' })
   updatedAt: Date;
+  
 }

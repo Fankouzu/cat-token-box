@@ -12,6 +12,7 @@ import { Constants } from '../../common/constants';
 import { LRUCache } from 'lru-cache';
 import { TxEntity } from '../../entities/tx.entity';
 import { CommonService } from '../../services/common/common.service';
+import { TokenMintEntity } from '../../entities/tokenMint.entity';
 
 @Injectable()
 export class TokenService {
@@ -34,6 +35,8 @@ export class TokenService {
     private readonly txOutRepository: Repository<TxOutEntity>,
     @InjectRepository(TxEntity)
     private readonly txRepository: Repository<TxEntity>,
+    @InjectRepository(TokenMintEntity)
+    private readonly tokenMintRepository: Repository<TokenMintEntity>,
   ) {}
 
   async getTokenInfoByTokenIdOrTokenAddress(tokenIdOrTokenAddr: string) {
@@ -65,10 +68,24 @@ export class TokenService {
       }
       cached = tokenInfo;
     }
+    
+    if (cached) {
+      const mintedAmount = await this.tokenMintRepository
+        .createQueryBuilder('tokenMint')
+        .select('SUM(tokenMint.tokenAmount)', 'total')
+        .where('tokenMint.tokenPubKey = :tokenPubKey', { tokenPubKey: cached.tokenPubKey })
+        .getRawOne();
+      
+      cached = { 
+        ...cached, 
+        minted: mintedAmount ? BigInt(mintedAmount.total).toString() : '0' 
+      } as TokenInfoEntity & { minted: string };
+    }
+    
     return this.renderTokenInfo(cached);
   }
 
-  renderTokenInfo(tokenInfo: TokenInfoEntity) {
+  renderTokenInfo(tokenInfo: TokenInfoEntity & { minted?: string }) {
     if (!tokenInfo) {
       return null;
     }
@@ -76,7 +93,7 @@ export class TokenService {
     const tokenAddr = xOnlyPubKeyToAddress(tokenInfo.tokenPubKey);
     const rendered = Object.assign(
       {},
-      { minterAddr, tokenAddr, info: tokenInfo.rawInfo },
+      { minterAddr, tokenAddr, info: tokenInfo.rawInfo, minted: tokenInfo.minted },
       tokenInfo,
     );
     delete rendered.rawInfo;
