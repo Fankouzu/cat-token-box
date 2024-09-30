@@ -26,6 +26,7 @@ import { LRUCache } from 'lru-cache';
 import { CommonService } from '../common/common.service';
 import { TxOutArchiveEntity } from 'src/entities/txOutArchive.entity';
 import { Cron } from '@nestjs/schedule';
+import { DeepPartial } from 'typeorm';
 
 @Injectable()
 export class TxService {
@@ -339,7 +340,7 @@ export class TxService {
               ? this.buildBaseTxOutEntity(tx, i, blockHeader, payOuts)
               : null,
           )
-          .filter((out) => out !== null),
+          .filter((out): out is DeepPartial<TxOutEntity> => out !== null),
       ),
     );
     return stateHashes;
@@ -513,14 +514,14 @@ export class TxService {
               return i === tokenOutputIndex
                 ? {
                     ...baseEntity,
-                    ownerPubKeyHash,
-                    tokenAmount,
+                    ownerPkh: ownerPubKeyHash,
+                    tokenAmount: tokenAmount.toString(),
                   }
                 : baseEntity;
             }
             return null;
           })
-          .filter((out) => out !== null),
+          .filter((out): out is DeepPartial<TxOutEntity> => out !== null),
       ),
     );
     return stateHashes;
@@ -625,12 +626,13 @@ export class TxService {
         manager.save(
           TxOutEntity,
           [...tokenOutputs.keys()].map((i) => {
+            const baseEntity = this.buildBaseTxOutEntity(tx, i, blockHeader, payOuts);
             return {
-              ...this.buildBaseTxOutEntity(tx, i, blockHeader, payOuts),
-              ownerPubKeyHash: tokenOutputs.get(i).ownerPubKeyHash,
-              tokenAmount: tokenOutputs.get(i).tokenAmount,
+              ...baseEntity,
+              ownerPkh: tokenOutputs.get(i).ownerPubKeyHash,
+              tokenAmount: tokenOutputs.get(i).tokenAmount.toString(), // 转换为字符串
             };
-          }),
+          })
         ),
       );
     }
@@ -660,7 +662,7 @@ export class TxService {
       number,
       {
         ownerPubKeyHash: string;
-        tokenAmount: bigint;
+        tokenAmount: string; // 改为 string 类型
       }
     >();
     for (let i = 0; i < Constants.CONTRACT_OUTPUT_MAX_COUNT; i++) {
@@ -668,7 +670,7 @@ export class TxService {
         const ownerPubKeyHash = ownerPubKeyHashes[i].toString('hex');
         const tokenAmount = BigInt(
           tokenAmounts[i].readIntLE(0, tokenAmounts[i].length),
-        );
+        ).toString(); // 转换为字符串
         tokenOutputs.set(i + 1, {
           ownerPubKeyHash,
           tokenAmount,
@@ -799,14 +801,14 @@ export class TxService {
     outputIndex: number,
     blockHeader: BlockHeader,
     payOuts: TaprootPayment[],
-  ) {
+  ): DeepPartial<TxOutEntity> {
     return {
       txid: tx.getId(),
       outputIndex,
       blockHeight: blockHeader.height,
-      satoshis: BigInt(tx.outs[outputIndex].value),
+      satoshis: BigInt(tx.outs[outputIndex].value).toString(), // 转换为字符串
       lockingScript: tx.outs[outputIndex].script.toString('hex'),
-      xOnlyPubKey: payOuts[outputIndex].pubkey.toString('hex'),
+      xonlyPubkey: payOuts[outputIndex].pubkey.toString('hex'),
     };
   }
 

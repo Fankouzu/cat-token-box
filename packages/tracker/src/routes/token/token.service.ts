@@ -13,6 +13,7 @@ import { LRUCache } from 'lru-cache';
 import { TxEntity } from '../../entities/tx.entity';
 import { CommonService } from '../../services/common/common.service';
 import { TokenMintEntity } from '../../entities/tokenMint.entity';
+import { FindOptionsWhere } from 'typeorm';
 
 @Injectable()
 export class TokenService {
@@ -190,13 +191,13 @@ export class TokenService {
     ) {
       return [];
     }
-    const where = {
-      ownerPubKeyHash,
+    const where: FindOptionsWhere<TxOutEntity> = {
+      ownerPkh: ownerPubKeyHash,
       spendTxid: IsNull(),
       blockHeight: LessThanOrEqual(lastProcessedHeight),
     };
     if (tokenInfo) {
-      Object.assign(where, { xOnlyPubKey: tokenInfo.tokenPubKey });
+      where.xonlyPubkey = tokenInfo.tokenPubKey;
     }
     return this.txOutRepository.find({
       where,
@@ -237,10 +238,10 @@ export class TokenService {
         },
         txoStateHashes,
       };
-      if (utxo.ownerPubKeyHash !== null && utxo.tokenAmount !== null) {
+      if (utxo.ownerPkh !== null && utxo.tokenAmount !== null) {
         Object.assign(renderedUtxo, {
           state: {
-            address: utxo.ownerPubKeyHash,
+            address: utxo.ownerPkh,
             amount: utxo.tokenAmount,
           },
         });
@@ -252,13 +253,13 @@ export class TokenService {
 
   /**
    * @param utxos utxos with the same owner address
-   * @returns token balances grouped by xOnlyPubKey
+   * @returns token balances grouped by xonlyPubkey
    */
   groupTokenBalances(utxos: TxOutEntity[]) {
     const balances = {};
     for (const utxo of utxos) {
-      balances[utxo.xOnlyPubKey] =
-        (balances[utxo.xOnlyPubKey] || 0n) + BigInt(utxo.tokenAmount);
+      balances[utxo.xonlyPubkey] =
+        (balances[utxo.xonlyPubkey] || 0n) + BigInt(utxo.tokenAmount);
     }
     return balances;
   }
@@ -267,7 +268,7 @@ export class TokenService {
     try {
       // 检查数据库连接
       await this.tokenMintRepository.query('SELECT 1');
-      console.log('Database connection successful');
+      // console.log('Database connection successful');
 
       // 检查token_mint表是否存在
       const tableExists = await this.tokenMintRepository.query(`
@@ -279,7 +280,7 @@ export class TokenService {
       `);
       
       if (tableExists[0].exists) {
-        console.log('token_mint table exists');
+        // console.log('token_mint table exists');
       } else {
         console.error('token_mint table does not exist');
       }
@@ -290,10 +291,39 @@ export class TokenService {
         FROM information_schema.columns 
         WHERE table_name = 'token_mint'
       `);
-      console.log('token_mint table structure:', columns);
+      // console.log('token_mint table structure:', columns);
 
     } catch (error) {
       console.error('Error checking database and table:', error);
     }
+  }
+
+  async getHolderListByTokenIdOrTokenAddress(tokenIdOrTokenAddr: string) {
+    const tokenInfo = await this.getTokenInfoByTokenIdOrTokenAddress(tokenIdOrTokenAddr);
+    if (!tokenInfo || !tokenInfo.tokenPubKey) {
+      return null;
+    }
+
+    const query = `
+      SELECT 
+        "owner_pkh" as address, 
+        SUM("token_amount") as balance, 
+        COUNT(*) as "utxoCount"
+      FROM 
+        tx_out
+      WHERE 
+        "xonly_pubkey" = $1 
+        AND "spend_txid" IS NULL
+      GROUP BY 
+        "owner_pkh"
+    `;
+
+    const holders = await this.txOutRepository.query(query, [tokenInfo.tokenPubKey]);
+
+    return holders.map(holder => ({
+      address: holder.address,
+      balance: holder.balance,
+      utxoCount: parseInt(holder.utxoCount),
+    }));
   }
 }

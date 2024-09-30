@@ -103,4 +103,10 @@ export class TokenController {
       return errorResponse(e);
     }
   }
+
+  @Get(':tokenIdOrAddr/holders')
+  @ApiTags('token')
+  async getHolderList(@Param('tokenIdOrAddr') tokenIdOrAddr: string) {
+    return this.tokenService.getHolderListByTokenIdOrTokenAddress(tokenIdOrAddr);
+  }
 }
