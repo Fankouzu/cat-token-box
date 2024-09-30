@@ -1,15 +1,15 @@
-import { Entity, Column, PrimaryGeneratedColumn } from 'typeorm';
+import { Entity, Column, PrimaryColumn } from 'typeorm';
 
 @Entity('tx_out')
 export class TxOutEntity {
-  @PrimaryGeneratedColumn()
-  id: number;
+  @PrimaryColumn()
+  txid: string;
 
-  @Column({ name: 'token_amount', type: 'bigint' })
-  tokenAmount: string;
-
-  @Column({ name: 'output_index' })
+  @PrimaryColumn({ name: 'output_index' })
   outputIndex: number;
+
+  @Column({ name: 'token_amount', type: 'bigint', nullable: true })
+  tokenAmount: string;
 
   @Column({ name: 'block_height' })
   blockHeight: number;
@@ -20,13 +20,13 @@ export class TxOutEntity {
   @Column({ name: 'created_at' })
   createdAt: Date;
 
-  @Column({ name: 'update_at' })
-  updatedAt: Date;
+  @Column({ name: 'update_at' })  // 修改这里
+  updateAt: Date;  // 修改这里
 
   @Column({ type: 'bigint' })
   satoshis: string;
 
-  @Column({ name: 'owner_pkh' })
+  @Column({ name: 'owner_pkh', nullable: true })
   ownerPkh: string;
 
   @Column({ name: 'locking_script' })
@@ -35,10 +35,7 @@ export class TxOutEntity {
   @Column({ name: 'xonly_pubkey' })
   xonlyPubkey: string;
 
-  @Column()
-  txid: string;
-
-  @Column({ name: 'state_hash' })
+  @Column({ name: 'state_hash', nullable: true })
   stateHash: string;
 
   @Column({ name: 'spend_txid', nullable: true })

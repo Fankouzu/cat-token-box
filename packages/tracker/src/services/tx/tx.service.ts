@@ -494,7 +494,7 @@ export class TxService {
         txid: tx.getId(),
         tokenPubKey,
         ownerPubKeyHash,
-        tokenAmount,
+        tokenAmount: tokenAmount.toString(),
         blockHeight: blockHeader.height,
       }),
     );
@@ -503,7 +503,7 @@ export class TxService {
       manager.save(
         TxOutEntity,
         tx.outs
-          .map((_, i) => {
+          .map((out, i) => {
             if (i <= tokenOutputIndex && payOuts[i]?.pubkey) {
               const baseEntity = this.buildBaseTxOutEntity(
                 tx,
@@ -806,9 +806,11 @@ export class TxService {
       txid: tx.getId(),
       outputIndex,
       blockHeight: blockHeader.height,
-      satoshis: BigInt(tx.outs[outputIndex].value).toString(), // 转换为字符串
+      satoshis: tx.outs[outputIndex].value.toString(),
       lockingScript: tx.outs[outputIndex].script.toString('hex'),
       xonlyPubkey: payOuts[outputIndex].pubkey.toString('hex'),
+      createdAt: new Date(),
+      updateAt: new Date(),  // 修改这里
     };
   }
 

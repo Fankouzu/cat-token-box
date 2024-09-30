@@ -20,7 +20,7 @@ export class TokenMintEntity {
   ownerPubKeyHash: string;
 
   @Column({ name: 'token_amount', type: 'bigint' })
-  tokenAmount: bigint;
+  tokenAmount: string;
 
   @Column({ name: 'block_height' })
   @Index()
