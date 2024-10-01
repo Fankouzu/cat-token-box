@@ -31,7 +31,8 @@
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
     "postinstall": "node scripts/postinstall.js",
-    "fill": "ts-node src/scripts/fillPkhToAddress.ts"
+    "fill": "ts-node src/scripts/fillPkhToAddress.ts",
+    "clear-database": "ts-node src/scripts/clearDatabase.ts"
   },
   "dependencies": {
     "@bitcoin-js/tiny-secp256k1-asmjs": "^2.2.3",
