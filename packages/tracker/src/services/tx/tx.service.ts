@@ -57,6 +57,8 @@ export class TxService {
     max: Constants.CACHE_MAX_SIZE,
   });
 
+  private addressCache: LRUCache<string, string | null>;
+
   constructor(
     private dataSource: DataSource,
     private commonService: CommonService,
@@ -76,6 +78,10 @@ export class TxService {
     this.logger.log(
       `guard transferScriptHash = ${this.TRANSFER_GUARD_SCRIPT_HASH}`,
     );
+    this.addressCache = new LRUCache<string, string | null>({
+      max: 10000, // 缓存最多10000个地址
+      ttl: 1000 * 60 * 60, // 缓存1小时
+    });
   }
 
   /**
@@ -877,23 +883,32 @@ export class TxService {
     const txid = tx.getId();
     
     try {
-      // 使用 getBtcTxOutputAddress 获取输出地址数组
       const outputAddresses = await this.getBtcTxOutputAddress(txid);
-
-      for (const address of outputAddresses) {
+      
+      // 批量处理地址
+      const addressesToProcess = outputAddresses.filter(address => {
         try {
-          const pubkeyHash = ownerAddressToPubKeyHash(address);
-          if (pubkeyHash) {
-            await this.updatePkhToAddress(pubkeyHash, address);
-          }
-        } catch (error) {
-          this.logger.error(
-            `Error processing address ${address}: ${error.message}`,
-          );
+          return !!ownerAddressToPubKeyHash(address);
+        } catch {
+          return false;
         }
+      });
+
+      // 并行处理地址
+      await Promise.all(addressesToProcess.map(address => this.processAddress(address)));
+    } catch (error) {
+      this.logger.error(`Error processing transaction ${txid}: ${error.message}`);
+    }
+  }
+
+  private async processAddress(address: string): Promise<void> {
+    try {
+      const pubkeyHash = ownerAddressToPubKeyHash(address);
+      if (pubkeyHash) {
+        await this.updatePkhToAddress(pubkeyHash, address);
       }
     } catch (error) {
-      this.logger.error(`Error fetching transaction data for ${txid}: ${error.message}`);
+      this.logger.error(`Error processing address ${address}: ${error.message}`);
     }
   }
 
@@ -932,20 +947,22 @@ export class TxService {
     address: string,
   ): Promise<void> {
     try {
+      // 检查缓存
+      const cachedAddress = this.addressCache.get(pubkeyHash);
+      if (cachedAddress === address) {
+        return; // 地址已经存在且相同，无需更新
+      }
+
       const existingRecord = await this.pkhToAddressRepository.findOne({
         where: { ownerPkh: pubkeyHash },
       });
 
-      if (existingRecord && !existingRecord.ownerAddress) {
-        await this.pkhToAddressRepository.update(
-          { ownerPkh: pubkeyHash },
-          { ownerAddress: address },
+      if (!existingRecord || !existingRecord.ownerAddress) {
+        await this.pkhToAddressRepository.upsert(
+          { ownerPkh: pubkeyHash, ownerAddress: address },
+          { conflictPaths: ['ownerPkh'] }
         );
-        // this.logger.debug(
-        //   `Updated address for pubkeyHash ${pubkeyHash}: ${address}`,
-        // );
-      } else {
-        // this.logger.debug(`No update needed for pubkeyHash ${pubkeyHash}`);
+        this.addressCache.set(pubkeyHash, address);
       }
     } catch (error) {
       this.logger.error(`Error updating pkh_to_address: ${error.message}`);
