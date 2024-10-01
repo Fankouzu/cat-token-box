@@ -44,7 +44,7 @@ async function initializeDataSource() {
   await AppDataSource.initialize();
 }
 
-async function getRawTransaction(txid: string) {
+async function getRawTransaction(txid: string, retries = 3): Promise<any> {
   try {
     const response = await axios.post(
       RPC_URL,
@@ -64,6 +64,11 @@ async function getRawTransaction(txid: string) {
     return response.data.result;
   } catch (error) {
     console.error(`Error fetching transaction ${txid}:`, error);
+    if (retries > 0) {
+      console.log(`Retrying in 10 seconds... (${retries} attempts left)`);
+      await new Promise(resolve => setTimeout(resolve, 10000));
+      return getRawTransaction(txid, retries - 1);
+    }
     return null;
   }
 }
