@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TxService } from './tx.service';
+import { RpcModule } from '../rpc/rpc.module';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { TxEntity } from '../../entities/tx.entity';
 import { TxOutEntity } from '../../entities/txOut.entity';
@@ -18,6 +19,7 @@ import { CommonModule } from '../common/common.module'; // 添加这行
       PkhToAddressEntity,
     ]),
     CommonModule, // 添加这行
+    RpcModule, // 导入 RpcModule
   ],
   providers: [TxService],
   exports: [TxService],

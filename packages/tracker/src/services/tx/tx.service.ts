@@ -18,7 +18,11 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Constants } from '../../common/constants';
 import { TokenInfoEntity } from '../../entities/tokenInfo.entity';
 import { CatTxError } from '../../common/exceptions';
-import { ownerAddressToPubKeyHash, parseTokenInfo, TaprootPayment } from '../../common/utils';
+import {
+  ownerAddressToPubKeyHash,
+  parseTokenInfo,
+  TaprootPayment,
+} from '../../common/utils';
 import { BlockHeader, TokenInfo } from '../../common/types';
 import { TokenMintEntity } from '../../entities/tokenMint.entity';
 import { getGuardContractInfo } from '@cat-protocol/cat-smartcontracts';
@@ -30,6 +34,7 @@ import { DeepPartial } from 'typeorm';
 import axios from 'axios';
 import { address } from 'bitcoinjs-lib';
 import { PkhToAddressEntity } from '../../entities/pkhToAddress.entity';
+import { RpcService } from '../rpc/rpc.service';
 
 @Injectable()
 export class TxService {
@@ -61,6 +66,7 @@ export class TxService {
     private txEntityRepository: Repository<TxEntity>,
     @InjectRepository(PkhToAddressEntity)
     private pkhToAddressRepository: Repository<PkhToAddressEntity>,
+    private rpcService: RpcService, // 添加 RpcService 的依赖注入
   ) {
     const guardContractInfo = getGuardContractInfo();
     this.GUARD_PUBKEY = guardContractInfo.tpubkey;
@@ -83,7 +89,6 @@ export class TxService {
     if (tx.isCoinbase()) {
       return;
     }
-    
 
     // filter CAT tx
     if (!this.isCatTx(tx)) {
@@ -631,19 +636,24 @@ export class TxService {
       .hash160(guardInput?.redeemScript || Buffer.alloc(0))
       .toString('hex');
     if (scriptHash === this.TRANSFER_GUARD_SCRIPT_HASH) {
-      const tokenOutputs =await this.parseTokenOutputs(guardInput);
+      const tokenOutputs = await this.parseTokenOutputs(guardInput);
       // save tx outputs
       promises.push(
         manager.save(
           TxOutEntity,
           [...tokenOutputs.keys()].map((i) => {
-            const baseEntity = this.buildBaseTxOutEntity(tx, i, blockHeader, payOuts);
+            const baseEntity = this.buildBaseTxOutEntity(
+              tx,
+              i,
+              blockHeader,
+              payOuts,
+            );
             return {
               ...baseEntity,
               ownerPkh: tokenOutputs.get(i).ownerPubKeyHash,
               tokenAmount: tokenOutputs.get(i).tokenAmount.toString(), // 转换为字符串
             };
-          })
+          }),
         ),
       );
     }
@@ -823,7 +833,7 @@ export class TxService {
       lockingScript: tx.outs[outputIndex].script.toString('hex'),
       xonlyPubkey: payOuts[outputIndex].pubkey.toString('hex'),
       createdAt: new Date(),
-      updateAt: new Date(),  // 修改这里
+      updateAt: new Date(), // 修改这里
     };
   }
 
@@ -865,40 +875,75 @@ export class TxService {
   async processTxSaveAddress(txHex: string): Promise<void> {
     const tx = Transaction.fromHex(txHex);
     const txid = tx.getId();
-
+    
     try {
-      const response = await axios.get(`https://mempool.fractalbitcoin.io/api/tx/${txid}`);
-      const txData = response.data;
+      // 使用 getBtcTxOutputAddress 获取输出地址数组
+      const outputAddresses = await this.getBtcTxOutputAddress(txid);
 
-      if (txData.vout && Array.isArray(txData.vout)) {
-        for (const output of txData.vout) {
-          if (output.scriptpubkey_address) {
-            try {
-              const pubkeyHash = ownerAddressToPubKeyHash(output.scriptpubkey_address);
-              await this.updatePkhToAddress(pubkeyHash, output.scriptpubkey_address);
-            } catch (error) {
-              this.logger.error(`Error processing address ${output.scriptpubkey_address}: ${error.message}`);
-            }
+      for (const address of outputAddresses) {
+        try {
+          const pubkeyHash = ownerAddressToPubKeyHash(address);
+          if (pubkeyHash) {
+            await this.updatePkhToAddress(pubkeyHash, address);
           }
+        } catch (error) {
+          this.logger.error(
+            `Error processing address ${address}: ${error.message}`,
+          );
         }
       }
     } catch (error) {
-      this.logger.error(`Error fetching transaction data: ${error.message}`);
+      this.logger.error(`Error fetching transaction data for ${txid}: ${error.message}`);
     }
   }
 
-  private async updatePkhToAddress(pubkeyHash: string, address: string): Promise<void> {
+  private async getBtcTxOutputAddress(txid: string): Promise<string[]> {
+    try {
+      // 使用 RpcService 获取原始交易信息
+      const response = await this.rpcService.getRawTransaction(txid, 1);
+      const rawTx = response.data.result;
+
+      // 提取需要的元数据
+      const vout = rawTx.vout.map((output: any) => ({
+        value: output.value,
+        n: output.n,
+        scriptPubKey: output.scriptPubKey,
+        address:
+          output.scriptPubKey.address ||
+          output.scriptPubKey.addresses?.[0] ||
+          null,
+      }));
+
+      // 提取所有输出的地址
+      const outputAddresses = vout
+        .map((output) => output.address)
+        .filter((address): address is string => address !== null);
+
+      // 返回输出地址数组
+      return outputAddresses;
+    } catch (error) {
+      this.logger.error(`获取交易 ${txid} 元数据时出错: ${error.message}`);
+      throw error;
+    }
+  }
+
+  private async updatePkhToAddress(
+    pubkeyHash: string,
+    address: string,
+  ): Promise<void> {
     try {
       const existingRecord = await this.pkhToAddressRepository.findOne({
-        where: { ownerPkh: pubkeyHash }
+        where: { ownerPkh: pubkeyHash },
       });
 
       if (existingRecord && !existingRecord.ownerAddress) {
         await this.pkhToAddressRepository.update(
           { ownerPkh: pubkeyHash },
-          { ownerAddress: address }
+          { ownerAddress: address },
         );
-        this.logger.debug(`Updated address for pubkeyHash ${pubkeyHash}: ${address}`);
+        this.logger.debug(
+          `Updated address for pubkeyHash ${pubkeyHash}: ${address}`,
+        );
       } else {
         this.logger.debug(`No update needed for pubkeyHash ${pubkeyHash}`);
       }
@@ -923,8 +968,8 @@ export class TxService {
         { ownerPkh: ownerPubKeyHash },
         {
           conflictPaths: ['ownerPkh'],
-          skipUpdateIfNoValuesChanged: true
-        }
+          skipUpdateIfNoValuesChanged: true,
+        },
       );
     } catch (error) {
       this.logger.error(`Error saving ownerPubKeyHash: ${error.message}`);
