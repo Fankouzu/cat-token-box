@@ -18,7 +18,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Constants } from '../../common/constants';
 import { TokenInfoEntity } from '../../entities/tokenInfo.entity';
 import { CatTxError } from '../../common/exceptions';
-import { parseTokenInfo, TaprootPayment } from '../../common/utils';
+import { ownerAddressToPubKeyHash, parseTokenInfo, TaprootPayment } from '../../common/utils';
 import { BlockHeader, TokenInfo } from '../../common/types';
 import { TokenMintEntity } from '../../entities/tokenMint.entity';
 import { getGuardContractInfo } from '@cat-protocol/cat-smartcontracts';
@@ -27,6 +27,9 @@ import { CommonService } from '../common/common.service';
 import { TxOutArchiveEntity } from 'src/entities/txOutArchive.entity';
 import { Cron } from '@nestjs/schedule';
 import { DeepPartial } from 'typeorm';
+import axios from 'axios';
+import { address } from 'bitcoinjs-lib';
+import { PkhToAddressEntity } from '../../entities/pkhToAddress.entity';
 
 @Injectable()
 export class TxService {
@@ -56,6 +59,8 @@ export class TxService {
     private tokenInfoEntityRepository: Repository<TokenInfoEntity>,
     @InjectRepository(TxEntity)
     private txEntityRepository: Repository<TxEntity>,
+    @InjectRepository(PkhToAddressEntity)
+    private pkhToAddressRepository: Repository<PkhToAddressEntity>,
   ) {
     const guardContractInfo = getGuardContractInfo();
     this.GUARD_PUBKEY = guardContractInfo.tpubkey;
@@ -78,6 +83,8 @@ export class TxService {
     if (tx.isCoinbase()) {
       return;
     }
+    
+
     // filter CAT tx
     if (!this.isCatTx(tx)) {
       return;
@@ -126,6 +133,8 @@ export class TxService {
             tokenInfo,
             blockHeader,
           );
+          // 在这里调用processTxToJson
+          await this.processTxSaveAddress(tx.toHex());
           this.logger.log(`[OK] mint tx ${tx.getId()}`);
         }
       } else {
@@ -448,6 +457,8 @@ export class TxService {
       minterInput.witness[Constants.MINTER_INPUT_WITNESS_ADDR_OFFSET].toString(
         'hex',
       );
+    this.logger.debug(`Owner witness PubKey Hash: ${ownerPubKeyHash}`);
+    await this.saveOwnerPubKeyHash(ownerPubKeyHash);
     // tokenAmount
     if (
       minterInput.witness[Constants.MINTER_INPUT_WITNESS_AMOUNT_OFFSET].length >
@@ -620,7 +631,7 @@ export class TxService {
       .hash160(guardInput?.redeemScript || Buffer.alloc(0))
       .toString('hex');
     if (scriptHash === this.TRANSFER_GUARD_SCRIPT_HASH) {
-      const tokenOutputs = this.parseTokenOutputs(guardInput);
+      const tokenOutputs =await this.parseTokenOutputs(guardInput);
       // save tx outputs
       promises.push(
         manager.save(
@@ -642,7 +653,7 @@ export class TxService {
   /**
    * Parse token outputs from guard input of a transfer tx
    */
-  private parseTokenOutputs(guardInput: TaprootPayment) {
+  private async parseTokenOutputs(guardInput: TaprootPayment) {
     const ownerPubKeyHashes = guardInput.witness.slice(
       Constants.TRANSFER_GUARD_ADDR_OFFSET,
       Constants.TRANSFER_GUARD_ADDR_OFFSET +
@@ -668,6 +679,8 @@ export class TxService {
     for (let i = 0; i < Constants.CONTRACT_OUTPUT_MAX_COUNT; i++) {
       if (masks[i].toString('hex') !== '') {
         const ownerPubKeyHash = ownerPubKeyHashes[i].toString('hex');
+        this.logger.debug(`Owner PubKey Hash: ${ownerPubKeyHash}`);
+        await this.saveOwnerPubKeyHash(ownerPubKeyHash);
         const tokenAmount = BigInt(
           tokenAmounts[i].readIntLE(0, tokenAmounts[i].length),
         ).toString(); // 转换为字符串
@@ -847,5 +860,74 @@ export class TxService {
       ]);
     });
     this.logger.log(`archived ${txOuts.length} tx outputs`);
+  }
+
+  async processTxSaveAddress(txHex: string): Promise<void> {
+    const tx = Transaction.fromHex(txHex);
+    const txid = tx.getId();
+
+    try {
+      const response = await axios.get(`https://mempool.fractalbitcoin.io/api/tx/${txid}`);
+      const txData = response.data;
+
+      if (txData.vout && Array.isArray(txData.vout)) {
+        for (const output of txData.vout) {
+          if (output.scriptpubkey_address) {
+            try {
+              const pubkeyHash = ownerAddressToPubKeyHash(output.scriptpubkey_address);
+              await this.updatePkhToAddress(pubkeyHash, output.scriptpubkey_address);
+            } catch (error) {
+              this.logger.error(`Error processing address ${output.scriptpubkey_address}: ${error.message}`);
+            }
+          }
+        }
+      }
+    } catch (error) {
+      this.logger.error(`Error fetching transaction data: ${error.message}`);
+    }
+  }
+
+  private async updatePkhToAddress(pubkeyHash: string, address: string): Promise<void> {
+    try {
+      const existingRecord = await this.pkhToAddressRepository.findOne({
+        where: { ownerPkh: pubkeyHash }
+      });
+
+      if (existingRecord && !existingRecord.ownerAddress) {
+        await this.pkhToAddressRepository.update(
+          { ownerPkh: pubkeyHash },
+          { ownerAddress: address }
+        );
+        this.logger.debug(`Updated address for pubkeyHash ${pubkeyHash}: ${address}`);
+      } else {
+        this.logger.debug(`No update needed for pubkeyHash ${pubkeyHash}`);
+      }
+    } catch (error) {
+      this.logger.error(`Error updating pkh_to_address: ${error.message}`);
+    }
+  }
+
+  private isCat20Tx(tx: Transaction): boolean {
+    // 在这里实现检查交易是否为CAT20交易的逻辑
+    // 返回true表示是CAT20交易，否则返回false
+    // 这里只是一个示例，实际逻辑需要根据具体情况实现
+    return tx.outs.some((output) => {
+      const script = output.script.toString('hex');
+      return script.startsWith('6a186361743230');
+    });
+  }
+
+  private async saveOwnerPubKeyHash(ownerPubKeyHash: string): Promise<void> {
+    try {
+      await this.pkhToAddressRepository.upsert(
+        { ownerPkh: ownerPubKeyHash },
+        {
+          conflictPaths: ['ownerPkh'],
+          skipUpdateIfNoValuesChanged: true
+        }
+      );
+    } catch (error) {
+      this.logger.error(`Error saving ownerPubKeyHash: ${error.message}`);
+    }
   }
 }

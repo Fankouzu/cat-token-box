@@ -66,7 +66,7 @@ async function getRawTransaction(txid: string, retries = 3): Promise<any> {
     console.error(`Error fetching transaction ${txid}:`, error);
     if (retries > 0) {
       console.log(`Retrying in 10 seconds... (${retries} attempts left)`);
-      await new Promise(resolve => setTimeout(resolve, 10000));
+      await new Promise((resolve) => setTimeout(resolve, 10000));
       return getRawTransaction(txid, retries - 1);
     }
     return null;
@@ -171,8 +171,8 @@ async function fillPkhToAddress() {
               );
               if (calculatedPkh === pkh) {
                 pkhToAddressMappings.push({
-                  owner_pkh: pkh,
-                  owner_address: address,
+                  ownerPkh: pkh,
+                  ownerAddress: address,
                 });
                 console.log(`Matched PKH ${pkh} to address ${address}`);
                 break;
