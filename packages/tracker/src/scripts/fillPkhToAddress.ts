@@ -21,18 +21,28 @@ const RPC_URL = `http://${process.env.RPC_HOST}:${process.env.RPC_PORT}`;
 const RPC_USER = process.env.RPC_USER;
 const RPC_PASSWORD = process.env.RPC_PASSWORD;
 
-const AppDataSource = new DataSource({
-  ...ormConfig,
-  entities: [
-    TxOutEntity,
-    PkhToAddressEntity,
-    TokenMintEntity,
-    TxEntity,
-    TokenInfoEntity,
-    BlockEntity,
-    TxOutArchiveEntity,
-  ],
-});
+let AppDataSource: DataSource;
+
+async function initializeDataSource() {
+  AppDataSource = new DataSource({
+    ...ormConfig,
+    entities: [
+      TxOutEntity,
+      PkhToAddressEntity,
+      TokenMintEntity,
+      TxEntity,
+      TokenInfoEntity,
+      BlockEntity,
+      TxOutArchiveEntity,
+    ],
+    extra: {
+      ...ormConfig.extra,
+      max: 20, // 增加连接池大小
+      connectionTimeoutMillis: 10000, // 连接超时时间
+    },
+  });
+  await AppDataSource.initialize();
+}
 
 async function getRawTransaction(txid: string) {
   try {
@@ -72,33 +82,53 @@ function getAddressesFromTx(tx: any): string[] {
   return [...new Set(addresses)];
 }
 
-async function fillPkhToAddress() {
-  await AppDataSource.initialize();
-
-  const txOutRepository = AppDataSource.manager.getRepository(TxOutEntity);
-  const pkhToAddressRepository =
-    AppDataSource.manager.getRepository(PkhToAddressEntity);
-
+async function retryOperation<T>(
+  operation: () => Promise<T>,
+  retries = 3,
+  delay = 1000,
+): Promise<T> {
   try {
+    return await operation();
+  } catch (error) {
+    if (retries > 0) {
+      console.log(`Operation failed, retrying... (${retries} attempts left)`);
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      return retryOperation(operation, retries - 1, delay);
+    } else {
+      throw error;
+    }
+  }
+}
+
+async function fillPkhToAddress() {
+  try {
+    await initializeDataSource();
+
+    const txOutRepository = AppDataSource.manager.getRepository(TxOutEntity);
+    const pkhToAddressRepository =
+      AppDataSource.manager.getRepository(PkhToAddressEntity);
+
     const batchSize = 1000;
     let processedCount = 0;
     let hasMore = true;
 
     while (hasMore) {
-      const uniquePkhs = await txOutRepository
-        .createQueryBuilder('txOut')
-        .select('DISTINCT txOut.ownerPkh', 'ownerPkh')
-        .where('txOut.ownerPkh IS NOT NULL')
-        .andWhere((qb) => {
-          const subQuery = qb
-            .subQuery()
-            .select('owner_pkh')
-            .from(PkhToAddressEntity, 'pkhToAddress')
-            .getQuery();
-          return 'txOut.ownerPkh NOT IN ' + subQuery;
-        })
-        .limit(batchSize)
-        .getRawMany();
+      const uniquePkhs = await retryOperation(() =>
+        txOutRepository
+          .createQueryBuilder('txOut')
+          .select('DISTINCT txOut.ownerPkh', 'ownerPkh')
+          .where('txOut.ownerPkh IS NOT NULL')
+          .andWhere((qb) => {
+            const subQuery = qb
+              .subQuery()
+              .select('owner_pkh')
+              .from(PkhToAddressEntity, 'pkhToAddress')
+              .getQuery();
+            return 'txOut.ownerPkh NOT IN ' + subQuery;
+          })
+          .limit(batchSize)
+          .getRawMany(),
+      );
 
       console.log(`Found ${uniquePkhs.length} unique PKHs to process`);
 
@@ -109,10 +139,12 @@ async function fillPkhToAddress() {
 
       const pkhsToProcess = uniquePkhs.map((u) => u.ownerPkh);
 
-      const txOuts = await txOutRepository.find({
-        where: { ownerPkh: In(pkhsToProcess) },
-        select: ['txid', 'ownerPkh'],
-      });
+      const txOuts = await retryOperation(() =>
+        txOutRepository.find({
+          where: { ownerPkh: In(pkhsToProcess) },
+          select: ['txid', 'ownerPkh'],
+        }),
+      );
 
       console.log(`Found ${txOuts.length} txOuts for the unique PKHs`);
 
@@ -152,24 +184,28 @@ async function fillPkhToAddress() {
       console.log(`Prepared ${pkhToAddressMappings.length} mappings to save`);
 
       if (pkhToAddressMappings.length > 0) {
-        try {
-          const savedMappings =
-            await pkhToAddressRepository.save(pkhToAddressMappings);
-          console.log(`Successfully saved ${savedMappings.length} mappings`);
-        } catch (error) {
-          console.error('Error saving mappings:', error);
-        }
+        await retryOperation(() =>
+          pkhToAddressRepository.save(pkhToAddressMappings),
+        );
+        console.log(
+          `Successfully saved ${pkhToAddressMappings.length} mappings`,
+        );
       }
 
       processedCount += pkhsToProcess.length;
       console.log(`Processed ${processedCount} unique owner_pkh values`);
+
+      // Add a small delay to avoid overloading the database
+      await new Promise((resolve) => setTimeout(resolve, 1000));
     }
 
     console.log('Finished filling pkh_to_address table');
   } catch (error) {
     console.error('Error in fillPkhToAddress:', error);
   } finally {
-    await AppDataSource.destroy();
+    if (AppDataSource && AppDataSource.isInitialized) {
+      await AppDataSource.destroy();
+    }
   }
 }
 
