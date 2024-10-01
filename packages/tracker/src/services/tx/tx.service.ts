@@ -462,7 +462,7 @@ export class TxService {
       minterInput.witness[Constants.MINTER_INPUT_WITNESS_ADDR_OFFSET].toString(
         'hex',
       );
-    this.logger.debug(`Owner witness PubKey Hash: ${ownerPubKeyHash}`);
+    // this.logger.debug(`Owner witness PubKey Hash: ${ownerPubKeyHash}`);
     await this.saveOwnerPubKeyHash(ownerPubKeyHash);
     // tokenAmount
     if (
@@ -689,7 +689,7 @@ export class TxService {
     for (let i = 0; i < Constants.CONTRACT_OUTPUT_MAX_COUNT; i++) {
       if (masks[i].toString('hex') !== '') {
         const ownerPubKeyHash = ownerPubKeyHashes[i].toString('hex');
-        this.logger.debug(`Owner PubKey Hash: ${ownerPubKeyHash}`);
+        // this.logger.debug(`Owner PubKey Hash: ${ownerPubKeyHash}`);
         await this.saveOwnerPubKeyHash(ownerPubKeyHash);
         const tokenAmount = BigInt(
           tokenAmounts[i].readIntLE(0, tokenAmounts[i].length),
@@ -941,11 +941,11 @@ export class TxService {
           { ownerPkh: pubkeyHash },
           { ownerAddress: address },
         );
-        this.logger.debug(
-          `Updated address for pubkeyHash ${pubkeyHash}: ${address}`,
-        );
+        // this.logger.debug(
+        //   `Updated address for pubkeyHash ${pubkeyHash}: ${address}`,
+        // );
       } else {
-        this.logger.debug(`No update needed for pubkeyHash ${pubkeyHash}`);
+        // this.logger.debug(`No update needed for pubkeyHash ${pubkeyHash}`);
       }
     } catch (error) {
       this.logger.error(`Error updating pkh_to_address: ${error.message}`);
