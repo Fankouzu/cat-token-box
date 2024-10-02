@@ -145,7 +145,7 @@ export class TxService {
             blockHeader,
           );
           // 在这里调用processTxToJson
-          await this.processTxSaveAddress(tx.toHex());
+          // await this.processTxSaveAddress(tx.toHex());
           this.logger.log(`[OK] mint tx ${tx.getId()}`);
         }
       } else {
